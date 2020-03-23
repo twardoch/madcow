@@ -9,10 +9,12 @@ I am tired of keeping track of where I got what. So I’ll have some premade lis
 Then I want to do 
 
 ```
-madcow i # install all
-madcow u # update all
-madcow c # clean all
-madcow d # delete all
+madcow i [spec] # install all in spec
+madcow u [spec] # update all in spec
+madcow c [spec] # clean all in spec
+madcow d [spec] # delete all in spec
 ```
+
+The `spec` is a simple folder that has text files for various installation technologies
 
 It’s opinionated because the premade list of CLI commands is mostly for work with graphics and text, including fonts, SVG, PNG, PDF etc.

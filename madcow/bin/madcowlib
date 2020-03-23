@@ -148,15 +148,17 @@ function neednode {
 
 # Specific functions
 
-function install {
-    needbrew convert ImageMagick
-    neednode svgo svgo;
-    needrust svg-halftone --git https://github.com/evestera/svg-halftone;
-    needgo points github.com/borud/points;
-    needgo png2svg github.com/xyproto/png2svg/cmd/png2svg;
-}
+#function install {
+#    needbrew convert ImageMagick
+#    neednode svgo svgo;
+#    needrust svg-halftone --git https://github.com/evestera/svg-halftone;
+#    needgo points github.com/borud/points;
+#    needgo png2svg github.com/xyproto/png2svg/cmd/png2svg;
+#}
 
-install;
+#install;
+
+echo "Hello!"
 
 #convert emoji_u1f4aa_1f3fe.png -background white -alpha remove -contrast-stretch 0 emoji_u1f4aa_1f3fe.white.png && points -f emoji_u1f4aa_1f3fe.white.png -o emoji_u1f4aa_1f3fe.points.svg -b 8 -t 0.8 -l
 

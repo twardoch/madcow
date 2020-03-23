@@ -11,6 +11,8 @@ Then I want to do
 ```
 madcow i # install all
 madcow u # update all
+madcow c # clean all
+madcow d # delete all
 ```
 
 It’s opinionated because the premade list of CLI commands is mostly for work with graphics and text, including fonts, SVG, PNG, PDF etc.

@@ -15,6 +15,7 @@ madcow c [spec] # clean all in spec
 madcow d [spec] # delete all in spec
 madcow m [spec] # make spec folder from packages installed on machine
 madcow l # list all installed
+madcow h # help
 ```
 
 The `spec` is a simple folder that has text files for various installation technologies

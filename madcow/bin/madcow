@@ -1,0 +1,207 @@
+#!/usr/bin/env bash
+
+# Madcow: Mac ADd COmmands Wsomething
+# Main executable script
+
+# Exit on error
+set -e
+
+# Ensure madcowlib is available and source it
+MADCOW_LIB_PATH="$HOME/.madcow/bin/madcowlib"
+if [ -f "$MADCOW_LIB_PATH" ]; then
+    source "$MADCOW_LIB_PATH"
+else
+    echo "ERROR: madcowlib not found at $MADCOW_LIB_PATH."
+    echo "Please ensure madcow is installed correctly. Try running the installer:"
+    echo "bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/twardoch/madcow/master/madcow_install.command)\""
+    exit 1
+fi
+
+# --- Command Definitions ---
+
+# Help command
+madcow_help() {
+    pp "Madcow - Help"
+    echo "Usage: madcow <command> [options]"
+    echo ""
+    echo "Available commands:"
+    echo "  install [spec_file]   Install packages from a spec file."
+    echo "                        If no spec_file is provided, attempts to use '$HOME/.madcow/default.spec'."
+    echo "  list [spec_file]      List packages defined in a spec file."
+    echo "                        If no spec_file is provided, attempts to use '$HOME/.madcow/default.spec'."
+    echo "  help                  Show this help message."
+    echo ""
+    echo "Spec file format:"
+    echo "  Each line should specify a package, prefixed by its type:"
+    echo "    brew:package_name"
+    echo "    pip3:package_name"
+    echo "    npm:package_name"
+    echo "    go:github.com/user/repo"
+    echo "    rust:crate_name"
+    echo "  Lines starting with # are considered comments and ignored."
+    pok "End of help."
+}
+
+# List command
+madcow_list() {
+    local spec_file_path="${1:-$HOME/.madcow/default.spec}"
+    pp "Madcow - List packages in '$spec_file_path'"
+
+    if [ ! -f "$spec_file_path" ]; then
+        perr "Specified spec file not found: $spec_file_path"
+        return 1
+    fi
+
+    echo "Packages specified in '$spec_file_path':"
+    # Read the file, filter out comments and empty lines
+    grep -v '^[[:space:]]*#' "$spec_file_path" | grep -v '^[[:space:]]*$' | while IFS= read -r line || [[ -n "$line" ]]; do
+        echo "  - $line"
+    done
+    pok "Listing complete."
+}
+
+# Install command
+madcow_install() {
+    local spec_file_path="${1:-$HOME/.madcow/default.spec}"
+    pp "Madcow - Install packages from '$spec_file_path'"
+
+    if [ ! -f "$spec_file_path" ]; then
+        perr "Specified spec file not found: $spec_file_path"
+        return 1
+    fi
+
+    local line_num=0
+    # Read the file, filter out comments and empty lines for processing
+    grep -v '^[[:space:]]*#' "$spec_file_path" | grep -v '^[[:space:]]*$' | while IFS= read -r line_with_potential_trailing_comment || [[ -n "$line_with_potential_trailing_comment" ]]; do
+        line_num=$((line_num + 1))
+
+        # Remove trailing comment using the function from madcowlib
+        local line=$(uncomment "$line_with_potential_trailing_comment")
+        # Trim whitespace from the potentially modified line again
+        line=$(echo "$line" | xargs)
+
+        # If line becomes empty after removing comment and trimming, skip it
+        if [ -z "$line" ]; then
+            continue
+        fi
+
+        echo ""
+        pins "Processing line $line_num: $line" # $line here is now stripped of trailing comments
+
+        local type=$(echo "$line" | cut -d':' -f1 | xargs)
+        local package_info_string=$(echo "$line" | cut -d':' -f2- | xargs) # Everything after the first colon
+
+        if [ -z "$type" ] || [ -z "$package_info_string" ]; then
+            pwarn "Line $line_num: Invalid format. Expected 'type:package_info'. Skipping."
+            continue
+        fi
+
+        local cmd_to_check=""
+        local actual_package_name_or_path=""
+        local -a remaining_args_array=() # Initialize as empty array
+
+        # New parsing logic based on type
+        # Note: `cut` behavior with -f if delimiter isn't present needs care.
+        # If no second ':', `cut -d':' -f2-` on `part1` yields empty.
+        # If `val="foo"`, `cut -d':' -f1 <<< "$val"` is `foo`, `cut -d':' -f2 <<< "$val"` is empty.
+
+        case "$type" in
+            brew)
+                # brew:package_name OR brew:command_name:package_name
+                cmd_to_check=$(echo "$package_info_string" | cut -d':' -f1 | xargs)
+                actual_package_name_or_path=$(echo "$package_info_string" | cut -d':' -f2 | xargs)
+                if [ -z "$actual_package_name_or_path" ]; then # Only one part after brew:
+                    actual_package_name_or_path="$cmd_to_check"
+                fi
+                # remaining_args_array is not typically used for brew
+                needbrew "$cmd_to_check" "$actual_package_name_or_path"
+                ;;
+            pip3|npm)
+                # type:command_to_check:package_name [other_pip_or_npm_args_space_separated]
+                cmd_to_check=$(echo "$package_info_string" | cut -d':' -f1 | xargs)
+                actual_package_name_or_path=$(echo "$package_info_string" | cut -d':' -f2 | xargs)
+                local args_part_string=$(echo "$package_info_string" | cut -d':' -f3- | xargs)
+
+                if [ -z "$actual_package_name_or_path" ]; then # Only type:cmd_or_pkg
+                     actual_package_name_or_path="$cmd_to_check" # Assume cmd is pkg
+                fi
+
+                read -r -a remaining_args_array <<< "$args_part_string" # Split space-separated args
+
+                if [ "$type" == "pip3" ]; then
+                    needpy3 "$cmd_to_check" "$actual_package_name_or_path" "${remaining_args_array[@]}"
+                else # npm
+                    neednode "$cmd_to_check" "$actual_package_name_or_path" "${remaining_args_array[@]}"
+                fi
+                ;;
+            go)
+                # go:command_to_check:package/path [other_go_args_space_separated]
+                # madcowlib's needgo adds @latest, so spec should not have it.
+                cmd_to_check=$(echo "$package_info_string" | cut -d':' -f1 | xargs)
+                actual_package_name_or_path=$(echo "$package_info_string" | cut -d':' -f2 | xargs)
+                local args_part_string=$(echo "$package_info_string" | cut -d':' -f3- | xargs)
+
+                if [ -z "$actual_package_name_or_path" ]; then # Only go:path/to/pkg (cmd derived) or go:cmd (path derived)
+                    # This case needs refinement: if it's a path, derive cmd. If not, assume cmd is pkg.
+                    # For MVP, require go:cmd:path if they differ. If go:singlepart, assume it's path and derive cmd.
+                    pwarn "Go spec '$package_info_string' is ambiguous. Assuming it's a package path and deriving command. Use 'go:cmd:path' for clarity."
+                    actual_package_name_or_path="$cmd_to_check" # cmd_to_check holds the single part
+                    cmd_to_check=$(basename "$actual_package_name_or_path")
+                fi
+
+                actual_package_name_or_path=$(echo "$actual_package_name_or_path" | sed 's/@latest$//' | sed 's/@main$//' | sed 's/@master$//') # Remove common version tags
+                read -r -a remaining_args_array <<< "$args_part_string"
+                needgo "$cmd_to_check" "$actual_package_name_or_path" "${remaining_args_array[@]}"
+                ;;
+            rust)
+                # rust:command_to_check:crate_or_git_flag:repo_if_git [other_cargo_args_space_separated]
+                cmd_to_check=$(echo "$package_info_string" | cut -d':' -f1 | xargs)
+                local cargo_args_string=$(echo "$package_info_string" | cut -d':' -f2- | xargs) # All args for cargo install after cmd
+
+                if [ -z "$cargo_args_string" ]; then # Only rust:cmd_or_crate
+                    pwarn "Rust spec '$package_info_string' is ambiguous. Assuming it's a crate name same as command. Use 'rust:cmd:crate' or 'rust:cmd:--git:url' for clarity."
+                    cargo_args_string="$cmd_to_check"
+                fi
+
+                # Convert colon-separated parts of cargo_args_string into space-separated for read -a
+                # e.g., rust:cmd:--git:url:--features:foo -> cmd, --git url --features foo
+                local space_separated_cargo_args=$(echo "$cargo_args_string" | sed 's/:/ /g')
+                read -r -a remaining_args_array <<< "$space_separated_cargo_args"
+                needrust "$cmd_to_check" "${remaining_args_array[@]}"
+                ;;
+            *)
+                pwarn "Line $line_num: Unknown type '$type'. Skipping."
+                continue # Skips to the next line in the while loop
+                ;;
+        esac
+    done
+    pok "Installation process complete."
+}
+
+
+# --- Argument Parsing and Command Execution ---
+COMMAND="$1"
+shift || true # Shift even if no arguments, to prevent error if $1 was not set
+
+case "$COMMAND" in
+    install)
+        madcow_install "$@"
+        ;;
+    list)
+        madcow_list "$@"
+        ;;
+    help|--help|-h)
+        madcow_help
+        ;;
+    "")
+        # No command provided
+        perr "No command provided. Use 'madcow help' to see available commands."
+        exit 1
+        ;;
+    *)
+        perr "Unknown command: $COMMAND. Use 'madcow help' to see available commands."
+        exit 1
+        ;;
+esac
+
+exit 0

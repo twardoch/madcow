@@ -1,0 +1,490 @@
+This file is a merged representation of the entire codebase, combined into a single document by Repomix.
+
+<file_summary>
+This section contains a summary of this file.
+
+<purpose>
+This file contains a packed representation of the entire repository's contents.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+</purpose>
+
+<file_format>
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Repository files (if enabled)
+5. Multiple file entries, each consisting of:
+  - File path as an attribute
+  - Full contents of the file
+</file_format>
+
+<usage_guidelines>
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+</usage_guidelines>
+
+<notes>
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Files matching patterns in .gitignore are excluded
+- Files matching default ignore patterns are excluded
+- Files are sorted by Git change count (files with more changes are at the bottom)
+</notes>
+
+</file_summary>
+
+<directory_structure>
+madcow/
+  bin/
+    madcow_update.command
+    madcowlib
+.gitignore
+LICENSE
+madcow_install.command
+README.md
+</directory_structure>
+
+<files>
+This section contains the contents of the repository's files.
+
+<file path="madcow/bin/madcow_update.command">
+#!/usr/bin/env bash
+dir=${0%/*}; if [ "$dir" = "$0" ]; then dir="."; fi; cd "$dir";
+
+mctmp="$TMPDIR/madcow-$(date '+%Y%m%d%H%M%S')";
+curl -L -o "$mctmp.zip" https://github.com/twardoch/madcow/archive/master.zip
+mkdir -p "$mctmp";
+unzip "$mctmp.zip" "madcow-master/madcow/*" -d "$mctmp";
+rm -f "$mctmp.zip";
+mchome="$HOME/.madcow";
+mkdir -p "$mchome";
+rsync -r -u "$mctmp/madcow-master/madcow/" "$mchome";
+rm -rf "$mctmp";
+mcbin="$mchome/bin";
+source "$mcbin/madcowlib";
+echo "OK";
+
+#/usr/bin/bash -e "$(curl -fsSL https://raw.githubusercontent.com/twardoch/madcow/master/madcow_install_mac.command)"
+</file>
+
+<file path="madcow/bin/madcowlib">
+#!/usr/bin/env bash
+dir=${0%/*}; if [ "$dir" = "$0" ]; then dir="."; fi; cd "$dir";
+
+# Library functions
+
+function uncomment {
+    [ -z "$1" ] && return || local m="$1";
+    [[ $m =~ ^(.*)(#.*) ]]; # Remove comment string
+    [ ! -z "${BASH_REMATCH[2]}" ] && local m="${BASH_REMATCH[1]}";
+    echo "$m";
+}
+
+
+function pp {
+    echo;
+    echo -e "\e[96m[madcow] $1";
+    echo;
+}
+
+function pins {
+    pp "Installing $1...";
+}
+
+function pup {
+    info "Updating $1...";
+}
+
+function pok {
+    echo;
+    echo -e "\e[92m[madcow] $1";
+    echo;
+}
+
+function perr {
+    echo;
+    echo -e "\e[91m[madcow][ERROR] $1";
+    echo;
+    exit;
+}
+
+function pwarn {
+    echo;
+    echo -e "\e[91m[madcow][ATTENTION] $1";
+    echo;
+}
+
+function insbrew {
+    if [ ! -x "$(which brew)" ]; then
+        pins "brew";
+        /usr/bin/ruby -e "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/master/install)";
+    fi;
+}
+
+function pkgbrew {
+    # Install package if not installed
+    # $ pkgbrew go
+    [ -z "$1" ] && return || local pkg="$1";
+    insbrew;
+    if [ -x "$(touch $(brew --prefix)/var/testX6mg87lk)" ]; then
+        pwarn "`brew` needs to fix permissions, enter your administrator password:"
+        sudo chown -R $(whoami) $(brew --prefix)/*;
+        sudo chown $(whoami) $(brew --prefix)/*;
+        brew list -1 | while read pkg; do brew unlink "$pkg"; brew link "$pkg"; done
+    else
+        rm "$(brew --prefix)/var/testX6mg87lk";
+    fi;
+    if brew ls --versions "$pkg" >/dev/null; then
+        pup "brew:$pkg"; HOMEBREW_NO_AUTO_UPDATE=1 brew upgrade "$pkg";
+    else
+        pins "brew:$pkg"; HOMEBREW_NO_AUTO_UPDATE=1 brew install "$pkg"
+    fi
+}
+
+function needbrew {
+    # $ needbrew package # if command=package
+    # $ needbrew command package # if command!=package
+    [ -z "$1" ] && return || local cmd="$1";
+    [ -z "$2" ] && local pkg="$cmd" || local pkg="$2";
+    if [ ! -x "$(which $cmd)" ]; then
+        pkgbrew "$pkg";
+    fi;
+}
+
+function needbrewpy2 {
+    if [ ! -x "$(which python2)" ]; then
+        needbrew python2 python@2;
+        brew link --overwrite python@2;
+    fi;
+}
+
+function needbrewpy3 {
+    if [ ! -x "$(which python3)" ]; then
+        needbrew python3 python;
+        brew link --overwrite python;
+    fi;
+}
+
+function needgo {
+    # $ needgo command github.com/author/repo [args...]
+    [ -z "$1" ] && return || local cmd="$1";
+    [ -z "$2" ] && return || local pkg="$2";
+    needbrew go;
+    if [ ! -x "$(which $cmd)" ]; then
+        pins "go:$pkg"; go get -u "$pkg" "${@:3}";
+    fi;
+}
+
+function needrust {
+    # $ needrust command --git https://github.com/author/repo [args...]
+    [ -z "$1" ] && return || local cmd="$1";
+    [ -z "$2" ] && return || local pkg="$2";
+    needbrew cargo rust;
+    if [ ! -x "$(which $cmd)" ]; then
+        pins "rust:$pkg"; cargo install "$pkg" "${@:3}";
+    fi;
+}
+
+function needpy2 {
+    # $ needpy2 command package [package...]
+    [ -z "$1" ] && return || local cmd="$1";
+    [ -z "$2" ] && return || local pkg="$2";
+    needbrewpy2;
+    if [ ! -x "$(which $cmd)" ]; then
+        pins "py2:$pkg"; python2 -m pip install --user --upgrade "$pkg" "${@:3}";
+    fi;
+}
+
+function needpy3 {
+    # $ needpy3 command package [package...]
+    [ -z "$1" ] && return || local cmd="$1";
+    [ -z "$2" ] && return || local pkg="$2";
+    needbrewpy3;
+    if [ ! -x "$(which $cmd)" ]; then
+        pins "py3:$pkg"; python3 -m pip install --user --upgrade "$pkg" "${@:3}";
+    fi;
+}
+
+function neednode {
+    # $ neednode package # if command=package
+    # $ neednode command package [package...] # if command!=package
+    [ -z "$1" ] && return || local cmd="$1";
+    [ -z "$2" ] && local pkg="$cmd" || local pkg="$2";
+    needbrew npm node;
+    if [ ! -x "$(which $cmd)" ]; then
+        pins "node:$pkg";npm i -g npm "$pkg" "${@:3}";
+    fi;
+}
+
+# Specific functions
+
+#function install {
+#    needbrew convert ImageMagick
+#    neednode svgo svgo;
+#    needrust svg-halftone --git https://github.com/evestera/svg-halftone;
+#    needgo points github.com/borud/points;
+#    needgo png2svg github.com/xyproto/png2svg/cmd/png2svg;
+#}
+
+#install;
+
+echo "Hello!"
+
+#convert emoji_u1f4aa_1f3fe.png -background white -alpha remove -contrast-stretch 0 emoji_u1f4aa_1f3fe.white.png && points -f emoji_u1f4aa_1f3fe.white.png -o emoji_u1f4aa_1f3fe.points.svg -b 8 -t 0.8 -l
+
+#pat='[^0-9]+([0-9]+)'
+#s='I am a string with some digits 1024'
+#[[ $s =~ $pat ]] # $pat must be unquoted
+#echo "${BASH_REMATCH[0]}"
+#echo "${BASH_REMATCH[1]}"
+</file>
+
+<file path=".gitignore">
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+#  Usually these files are written by a python script from a template
+#  before PyInstaller builds the exe, so as to inject date/other infos into it.
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+cover/
+
+# Translations
+*.mo
+*.pot
+
+# Django stuff:
+*.log
+local_settings.py
+db.sqlite3
+db.sqlite3-journal
+
+# Flask stuff:
+instance/
+.webassets-cache
+
+# Scrapy stuff:
+.scrapy
+
+# Sphinx documentation
+docs/_build/
+
+# PyBuilder
+.pybuilder/
+target/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# IPython
+profile_default/
+ipython_config.py
+
+# pyenv
+#   For a library or package, you might want to ignore these files since the code is
+#   intended to run in multiple environments; otherwise, check them in:
+# .python-version
+
+# pipenv
+#   According to pypa/pipenv#598, it is recommended to include Pipfile.lock in version control.
+#   However, in case of collaboration, if having platform-specific dependencies or dependencies
+#   having no cross-platform support, pipenv may install dependencies that don't work, or not
+#   install all needed dependencies.
+#Pipfile.lock
+
+# PEP 582; used by e.g. github.com/David-OConnor/pyflow
+__pypackages__/
+
+# Celery stuff
+celerybeat-schedule
+celerybeat.pid
+
+# SageMath parsed files
+*.sage.py
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Spyder project settings
+.spyderproject
+.spyproject
+
+# Rope project settings
+.ropeproject
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre type checker
+.pyre/
+
+# pytype static type analyzer
+.pytype/
+
+# Cython debug symbols
+cython_debug/
+
+# static files generated from Django application using `collectstatic`
+media
+static
+
+# Covers JetBrains IDEs: IntelliJ, RubyMine, PhpStorm, AppCode, PyCharm, CLion, Android Studio, WebStorm and Rider
+# Reference: https://intellij-support.jetbrains.com/hc/en-us/articles/206544839
+
+# User-specific stuff
+.idea/
+
+# CMake
+cmake-build-*/
+
+
+# File-based project format
+*.iws
+
+# General
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Icon must end with two \r
+Icon
+
+
+# Thumbnails
+._*
+
+# Files that might appear in the root of a volume
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+
+# Directories potentially created on remote AFP share
+.AppleDB
+.AppleDesktop
+Network Trash Folder
+Temporary Items
+.apdisk
+</file>
+
+<file path="LICENSE">
+MIT License
+
+Copyright (c) 2020 Adam Twardoch
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+</file>
+
+<file path="madcow_install.command">
+#!/usr/bin/env bash
+dir=${0%/*}; if [ "$dir" = "$0" ]; then dir="."; fi; cd "$dir";
+eval "$(curl -fsSL https://raw.githubusercontent.com/twardoch/madcow/master/madcow/bin/madcow_update.command)"
+</file>
+
+<file path="README.md">
+# madcow
+
+Mac ADd COmmands Wsomething: Very simple, stupid, private & opinionated "package manager" for CLI tools on my macOS
+
+CLI tools on macOS come from different sources: brew, cargo, npm, pip 2 & 3, go etc.
+
+I am tired of keeping track of where I got what. So I’ll have some premade lists of CLI commands, and sources where they come from.
+
+Then I want to do
+
+```
+madcow i [spec] # install all in spec
+madcow u [spec] # update all in spec
+madcow c [spec] # clean all in spec
+madcow d [spec] # delete all in spec
+madcow m [spec] # make spec folder from packages installed on machine
+madcow l # list all installed
+madcow h # help
+```
+
+The `spec` is a simple folder that has text files for various installation technologies
+
+It’s opinionated because the premade list of CLI commands is mostly for work with graphics and text, including fonts, SVG, PNG, PDF etc.
+
+And it’s not sophisticated. Doesn’t super-smart resolve dependencies. If it fails, it fails.
+</file>
+
+</files>

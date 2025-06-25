@@ -1,169 +1,302 @@
 #!/usr/bin/env bash
-dir=${0%/*}; if [ "$dir" = "$0" ]; then dir="."; fi; cd "$dir";
+#
+# Madcow Library (madcowlib)
+#
+# This library provides helper functions for the main madcow script.
+# It is intended to be sourced by the madcow script, not run directly.
+# Assumes it is located in $HOME/.madcow/bin/madcowlib when sourced by madcow.
+#
 
-# Library functions
+# --- Utility Functions ---
 
+# Removes a trailing comment from a string
+# Example: uncomment "some command # this is a comment" -> "some command "
 function uncomment {
     [ -z "$1" ] && return || local m="$1";
-    [[ $m =~ ^(.*)(#.*) ]]; # Remove comment string
-    [ ! -z "${BASH_REMATCH[2]}" ] && local m="${BASH_REMATCH[1]}";
-    echo "$m";
-}
-
-
-function pp {
-    echo;
-    echo -e "\e[96m[madcow] $1";
-    echo;
-}
-
-function pins {
-    pp "Installing $1...";
-}
-
-function pup {
-    info "Updating $1...";
-}
-
-function pok {
-    echo;
-    echo -e "\e[92m[madcow] $1";
-    echo;
-}
-
-function perr {
-    echo;
-    echo -e "\e[91m[madcow][ERROR] $1";
-    echo;
-    exit;
-}
-
-function pwarn {
-    echo;
-    echo -e "\e[91m[madcow][ATTENTION] $1";
-    echo;
-}
-
-function insbrew {
-    if [ ! -x "$(which brew)" ]; then
-        pins "brew";
-        /usr/bin/ruby -e "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/master/install)";
-    fi;
-}
-
-function pkgbrew {
-    # Install package if not installed
-    # $ pkgbrew go
-    [ -z "$1" ] && return || local pkg="$1";
-    insbrew;
-    if [ -x "$(touch $(brew --prefix)/var/testX6mg87lk)" ]; then
-        pwarn "`brew` needs to fix permissions, enter your administrator password:"
-        sudo chown -R $(whoami) $(brew --prefix)/*;
-        sudo chown $(whoami) $(brew --prefix)/*;
-        brew list -1 | while read pkg; do brew unlink "$pkg"; brew link "$pkg"; done
+    # Regex: Match everything up to '#' (non-greedy) and then '#' followed by any characters.
+    # This ensures only the last comment is removed if multiple '#' exist.
+    if [[ $m =~ ^(.*)(#.*) ]]; then
+        echo "${BASH_REMATCH[1]}" # Print the part before the comment
     else
-        rm "$(brew --prefix)/var/testX6mg87lk";
-    fi;
-    if brew ls --versions "$pkg" >/dev/null; then
-        pup "brew:$pkg"; HOMEBREW_NO_AUTO_UPDATE=1 brew upgrade "$pkg";
-    else
-        pins "brew:$pkg"; HOMEBREW_NO_AUTO_UPDATE=1 brew install "$pkg"
+        echo "$m" # No comment found, print original string
     fi
 }
 
+# --- Output Formatting Functions ---
+
+# Print primary message
+function pp {
+    echo "" # Ensures a preceding blank line for readability
+    echo -e "\e[96m[madcow] $1\e[0m" # Cyan color
+    echo "" # Ensures a succeeding blank line
+}
+
+# Print installation message
+function pins {
+    # Light blue for 'Installing' message part
+    echo -e "\n\e[94m[madcow] Installing $1...\e[0m"
+}
+
+# Print update message (currently not used by MVP install flow, but good to keep)
+function pup {
+    # Yellow for 'Updating' message part
+    echo -e "\n\e[93m[madcow] Updating $1...\e[0m"
+}
+
+# Print success message
+function pok {
+    echo ""
+    echo -e "\e[92m[madcow] $1\e[0m" # Green color
+    echo ""
+}
+
+# Print error message and exit
+function perr {
+    echo ""
+    echo -e "\e[91m[madcow][ERROR] $1\e[0m" >&2 # Red color, to stderr
+    echo ""
+    exit 1
+}
+
+# Print warning message
+function pwarn {
+    echo ""
+    echo -e "\e[93m[madcow][ATTENTION] $1\e[0m" >&2 # Yellow color, to stderr
+    echo ""
+}
+
+# --- Core Dependency Management Functions ---
+
+# Ensures Homebrew is installed
+function insbrew {
+    if ! command -v brew &>/dev/null; then
+        pins "Homebrew (macOS Package Manager)"
+        # Non-interactive Homebrew installation
+        if CI=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"; then
+            pok "Homebrew installation script completed."
+            # Attempt to set up Homebrew path for the current session
+            if command -v brew &>/dev/null; then
+                # Brew might become available immediately if installer modifies current env (unlikely for subshells)
+                # Or if it was already partially set up
+                eval "$(brew shellenv)"
+                pok "Homebrew environment configured (detected existing brew command)."
+            elif [ -x "/home/linuxbrew/.linuxbrew/bin/brew" ]; then # Linuxbrew default path
+                eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+                pok "Linuxbrew environment configured for current session."
+            elif [ -x "/opt/homebrew/bin/brew" ]; then # Apple Silicon macOS path
+                eval "$(/opt/homebrew/bin/brew shellenv)"
+                pok "Homebrew (Apple Silicon) environment configured for current session."
+            elif [ -x "/usr/local/bin/brew" ]; then # Intel macOS path
+                eval "$(/usr/local/bin/brew shellenv)"
+                pok "Homebrew (Intel Macs) environment configured for current session."
+            else
+                pwarn "Homebrew installed, but could not automatically configure its environment for the current script session. You might need to run madcow again after ensuring Homebrew is in your PATH."
+            fi
+        else
+            perr "Homebrew installation script failed."
+        fi
+    fi
+}
+
+# Installs or upgrades a Homebrew package
+# Usage: pkgbrew <package_name>
+function pkgbrew {
+    [ -z "$1" ] && pwarn "No package name provided to pkgbrew." && return 1
+    local pkg="$1"
+
+    insbrew # Ensure Homebrew is installed
+
+    # Check for common Homebrew permission issues without attempting to fix them.
+    # The `brew doctor` command is the recommended way for users to diagnose and fix.
+    if [ -L "$(brew --prefix)/var/homebrew/locks" ] && [ ! -d "$(brew --prefix)/var/homebrew/locks" ] ; then
+        pwarn "Homebrew lock directory is a broken symlink. Run 'brew doctor' to diagnose."
+    elif [ -d "$(brew --prefix)/var/homebrew/locks" ] && ! [ -w "$(brew --prefix)/var/homebrew/locks" ]; then
+        pwarn "Homebrew lock directory is not writable. Run 'brew doctor' or check permissions for '$(brew --prefix)/var/'."
+    fi
+
+    # Check if package is installed
+    if brew ls --versions "$pkg" >/dev/null; then
+        pup "brew package: $pkg (checking for updates)"
+        if HOMEBREW_NO_AUTO_UPDATE=1 brew upgrade "$pkg"; then
+            pok "$pkg upgraded successfully or is already up-to-date."
+        else
+            pwarn "Failed to upgrade $pkg or it's already up-to-date but brew upgrade exited non-zero."
+        fi
+    else
+        pins "brew package: $pkg"
+        if HOMEBREW_NO_AUTO_UPDATE=1 brew install "$pkg"; then
+            pok "$pkg installed successfully."
+        else
+            perr "Failed to install $pkg using Homebrew."
+        fi
+    fi
+}
+
+# Ensures a command is available, installs via Homebrew if not.
+# Usage: needbrew <command_to_check> [package_name_if_different]
 function needbrew {
-    # $ needbrew package # if command=package
-    # $ needbrew command package # if command!=package
-    [ -z "$1" ] && return || local cmd="$1";
-    [ -z "$2" ] && local pkg="$cmd" || local pkg="$2";
-    if [ ! -x "$(which $cmd)" ]; then
-        pkgbrew "$pkg";
-    fi;
+    [ -z "$1" ] && pwarn "No command name provided to needbrew." && return 1
+    local cmd_to_check="$1"
+    local pkg_to_install="${2:-$cmd_to_check}" # Default to command name if package name not given
+
+    if ! command -v "$cmd_to_check" &>/dev/null; then
+        pins "$pkg_to_install (via Homebrew, for command $cmd_to_check)"
+        pkgbrew "$pkg_to_install"
+        if ! command -v "$cmd_to_check" &>/dev/null; then
+             perr "Installed $pkg_to_install via brew, but command $cmd_to_check is still not found. Check if package provides this command or if it's in PATH."
+        fi
+    else
+        pok "$cmd_to_check is already available."
+    fi
 }
 
-function needbrewpy2 {
-    if [ ! -x "$(which python2)" ]; then
-        needbrew python2 python@2;
-        brew link --overwrite python@2;
-    fi;
-}
-
+# Ensures Python 3 is available via Homebrew
 function needbrewpy3 {
-    if [ ! -x "$(which python3)" ]; then
-        needbrew python3 python;
-        brew link --overwrite python;
-    fi;
+    if ! command -v python3 &>/dev/null; then
+        needbrew python3 python@3 # Install python@3, command is python3
+        # Homebrew usually links python3 automatically. If not, user intervention might be needed.
+        # Avoid 'brew link --overwrite python' as it can cause issues.
+        # 'python@3' formula provides 'python3'.
+    fi
 }
 
+# Ensures Go is available and a Go package is installed.
+# Usage: needgo <command_to_check> <go_package_path> [go_get_args...]
 function needgo {
-    # $ needgo command github.com/author/repo [args...]
-    [ -z "$1" ] && return || local cmd="$1";
-    [ -z "$2" ] && return || local pkg="$2";
-    needbrew go;
-    if [ ! -x "$(which $cmd)" ]; then
-        pins "go:$pkg"; go get -u "$pkg" "${@:3}";
-    fi;
+    [ -z "$1" ] && pwarn "No command name provided to needgo." && return 1
+    [ -z "$2" ] && pwarn "No Go package path provided to needgo for command $1." && return 1
+    local cmd_to_check="$1"
+    local go_pkg_path="$2"
+    shift 2 # Remove cmd_to_check and go_pkg_path, rest are args for 'go get'
+    local go_get_args=("$@")
+
+    needbrew go go # Ensure 'go' command itself is installed via Homebrew
+
+    if ! command -v "$cmd_to_check" &>/dev/null; then
+        pins "Go package: $go_pkg_path (for command $cmd_to_check)"
+        # Install to $GOPATH/bin or $GOBIN, ensure these are in PATH by user
+        # Using 'go install' is the modern way instead of 'go get' for binaries
+        if go install "$go_pkg_path@latest" "${go_get_args[@]}"; then
+             pok "Go package $go_pkg_path installed successfully."
+             if ! command -v "$cmd_to_check" &>/dev/null; then
+                pwarn "Go package $go_pkg_path installed, but command $cmd_to_check not immediately found. Ensure \$GOPATH/bin or \$GOBIN is in your PATH."
+             fi
+        else
+             perr "Failed to install Go package $go_pkg_path."
+        fi
+    else
+        pok "Go command $cmd_to_check (from package $go_pkg_path) is already available."
+    fi
 }
 
+# Ensures Rust (cargo) is available and a Rust package/crate is installed.
+# Usage: needrust <command_to_check> [cargo_install_args...]
+# Example: needrust ripgrep rg  (installs rg crate, checks for rg command)
+#          needrust svgh --git https://github.com/twardoch/svgcleaner-gui svg-halftone (installs from git, checks for svgh)
 function needrust {
-    # $ needrust command --git https://github.com/author/repo [args...]
-    [ -z "$1" ] && return || local cmd="$1";
-    [ -z "$2" ] && return || local pkg="$2";
-    needbrew cargo rust;
-    if [ ! -x "$(which $cmd)" ]; then
-        pins "rust:$pkg"; cargo install "$pkg" "${@:3}";
-    fi;
+    [ -z "$1" ] && pwarn "No command name provided to needrust." && return 1
+    shift # Remove cmd_to_check, rest are args for 'cargo install'
+    [ ${#@} -eq 0 ] && pwarn "No Rust crate or installation arguments provided to needrust for command $1." && return 1
+    local cmd_to_check="$1" # This was the original $1 before shift
+    local cargo_install_args=("$@")
+
+    needbrew cargo rust # Ensure 'cargo' command itself is installed via Homebrew (via rust package)
+
+    if ! command -v "$cmd_to_check" &>/dev/null; then
+        pins "Rust package: ${cargo_install_args[0]} (for command $cmd_to_check)" # Log the primary target
+        if cargo install "${cargo_install_args[@]}"; then
+            pok "Rust package ${cargo_install_args[0]} installed successfully."
+            # Cargo installs to $HOME/.cargo/bin, user must have this in PATH
+            if ! command -v "$cmd_to_check" &>/dev/null; then
+                pwarn "Rust package ${cargo_install_args[0]} installed, but command $cmd_to_check not immediately found. Ensure \$HOME/.cargo/bin is in your PATH."
+            fi
+        else
+            perr "Failed to install Rust package ${cargo_install_args[0]}."
+        fi
+    else
+        pok "Rust command $cmd_to_check is already available."
+    fi
 }
 
-function needpy2 {
-    # $ needpy2 command package [package...]
-    [ -z "$1" ] && return || local cmd="$1";
-    [ -z "$2" ] && return || local pkg="$2";
-    needbrewpy2;
-    if [ ! -x "$(which $cmd)" ]; then
-        pins "py2:$pkg"; python2 -m pip install --user --upgrade "$pkg" "${@:3}";
-    fi;
-}
-
+# Ensures Python 3 and a pip3 package are available.
+# Usage: needpy3 <command_to_check> <pip_package_name> [pip_install_args...]
 function needpy3 {
-    # $ needpy3 command package [package...]
-    [ -z "$1" ] && return || local cmd="$1";
-    [ -z "$2" ] && return || local pkg="$2";
-    needbrewpy3;
-    if [ ! -x "$(which $cmd)" ]; then
-        pins "py3:$pkg"; python3 -m pip install --user --upgrade "$pkg" "${@:3}";
-    fi;
+    [ -z "$1" ] && pwarn "No command name provided to needpy3." && return 1
+    [ -z "$2" ] && pwarn "No pip package name provided to needpy3 for command $1." && return 1
+    local cmd_to_check="$1"
+    local pip_pkg_name="$2"
+    shift 2 # Remove cmd_to_check and pip_pkg_name, rest are args for 'pip install'
+    local pip_install_args=("$@")
+
+    needbrewpy3 # Ensure python3 (and thus pip3) is available
+
+    if ! command -v "$cmd_to_check" &>/dev/null; then
+        pins "pip3 package: $pip_pkg_name (for command $cmd_to_check)"
+        if python3 -m pip install --user --upgrade "$pip_pkg_name" "${pip_install_args[@]}"; then
+            pok "pip3 package $pip_pkg_name installed successfully."
+            # Pip installs user packages to a location that needs to be in PATH.
+            # e.g. $HOME/Library/Python/3.X/bin on macOS or $HOME/.local/bin on Linux
+            if ! command -v "$cmd_to_check" &>/dev/null; then
+                 pwarn "pip3 package $pip_pkg_name installed, but command $cmd_to_check not immediately found. Ensure Python's user script directory is in your PATH."
+                 local user_scripts_path=$(python3 -m site --user-base)"/bin"
+                 pwarn "Consider adding '$user_scripts_path' to your PATH."
+
+            fi
+        else
+            perr "Failed to install pip3 package $pip_pkg_name."
+        fi
+    else
+        pok "Command $cmd_to_check (from pip3 package $pip_pkg_name) is already available."
+    fi
 }
 
+# Ensures Node.js (npm) is available and an npm package is installed.
+# Usage: neednode <command_to_check> <npm_package_name> [npm_install_args...]
 function neednode {
-    # $ neednode package # if command=package
-    # $ neednode command package [package...] # if command!=package
-    [ -z "$1" ] && return || local cmd="$1";
-    [ -z "$2" ] && local pkg="$cmd" || local pkg="$2";
-    needbrew npm node;
-    if [ ! -x "$(which $cmd)" ]; then
-        pins "node:$pkg";npm i -g npm "$pkg" "${@:3}";
-    fi;
+    [ -z "$1" ] && pwarn "No command name provided to neednode." && return 1
+    [ -z "$2" ] && pwarn "No npm package name provided to neednode for command $1." && return 1
+    local cmd_to_check="$1"
+    local npm_pkg_name="$2"
+    shift 2 # Remove cmd_to_check and npm_pkg_name, rest are args for 'npm install -g'
+    local npm_install_args=("$@")
+
+    needbrew npm node # Ensure 'npm' (and 'node') are installed via Homebrew
+
+    if ! command -v "$cmd_to_check" &>/dev/null; then
+        pins "npm package: $npm_pkg_name (for command $cmd_to_check)"
+        # Attempt to update npm first, as old versions can cause issues
+        if npm install -g npm@latest; then
+            pok "npm updated to the latest version."
+        else
+            pwarn "Failed to update npm. Proceeding with package installation..."
+        fi
+
+        if npm install -g "$npm_pkg_name" "${npm_install_args[@]}"; then
+            pok "npm package $npm_pkg_name installed successfully."
+            # npm -g installs to a location that needs to be in PATH.
+            # Usually handled by Homebrew's node installation.
+            if ! command -v "$cmd_to_check" &>/dev/null; then
+                pwarn "npm package $npm_pkg_name installed, but command $cmd_to_check not immediately found. Check npm global path configuration and your PATH."
+            fi
+        else
+            perr "Failed to install npm package $npm_pkg_name."
+        fi
+    else
+        pok "Command $cmd_to_check (from npm package $npm_pkg_name) is already available."
+    fi
 }
 
-# Specific functions
+# Sanity check: ensure critical commands used by this lib are present
+# This is more of a self-check for the library's environment
+if ! command -v curl &>/dev/null; then
+    echo "[madcowlib][FATAL] curl is not installed. This is a critical dependency." >&2
+    exit 1
+fi
+if ! command -v git &>/dev/null && ( [[ "$*" == *"--git"* ]] || [[ "$*" == *"go get"* ]] ); then
+    # Only critical if git-dependent operations are likely
+    # For now, this is a soft warning as brew might install it if needed by a formula
+    # echo "[madcowlib][WARNING] git is not installed. Some operations may fail." >&2
+    : # Do nothing, let needbrew handle git if it's a direct dependency of a tool
+fi
 
-#function install {
-#    needbrew convert ImageMagick
-#    neednode svgo svgo;
-#    needrust svg-halftone --git https://github.com/evestera/svg-halftone;
-#    needgo points github.com/borud/points;
-#    needgo png2svg github.com/xyproto/png2svg/cmd/png2svg;
-#}
-
-#install;
-
-echo "Hello!"
-
-#convert emoji_u1f4aa_1f3fe.png -background white -alpha remove -contrast-stretch 0 emoji_u1f4aa_1f3fe.white.png && points -f emoji_u1f4aa_1f3fe.white.png -o emoji_u1f4aa_1f3fe.points.svg -b 8 -t 0.8 -l
-
-#pat='[^0-9]+([0-9]+)'
-#s='I am a string with some digits 1024'
-#[[ $s =~ $pat ]] # $pat must be unquoted
-#echo "${BASH_REMATCH[0]}"
-#echo "${BASH_REMATCH[1]}"
+pok "madcowlib initialized."
